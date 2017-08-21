@@ -1,0 +1,180 @@
+/**
+ * Created by Devsteam.mobi on 7/2/17.
+ */
+import {Actions} from 'react-native-router-flux';
+import {
+	DETECT_PLATFORM,
+	DEVICE_DIMENSIONS,
+	EMAIL_CHANGED,
+	PASSWORD_CHANGED,
+	LOGIN_USER,
+	LOGIN_USER_FAIL,
+	LOGIN_USER_SUCCESS
+} from './types';
+import {AsyncStorage} from 'react-native';
+import {HOST, getKeyFromStorage, prettyDate} from './const';
+
+export const detectPlatform = (platform) => {
+	console.log("AuthActions.js detectPlatform");
+	return dispatch => {
+		dispatch({
+			type: DETECT_PLATFORM,
+			payload: platform
+		});
+	};
+};
+
+export const getDeviceDimensions = (dimentions) => {
+	console.log("AuthActions.js getDeviceDimensions");
+	return dispatch => {
+		dispatch({
+			type: DEVICE_DIMENSIONS,
+			payload: dimentions
+		});
+	};
+};
+
+export const emailChanged = (text) => {
+	console.log("AuthActions.js emailChanged");
+	if (text !== 'masha@react.com') {
+		text = 'masha@react.com';
+		// masha@react.com
+	}
+	return {
+		type: EMAIL_CHANGED,
+		payload: text
+	};
+};
+
+export const passwordChanged = (text) => {
+	console.log("AuthActions.js passwordChanged");
+	if (text !== '123456') {
+		text = '123456';
+	}
+	return {
+		type: PASSWORD_CHANGED,
+		payload: text
+	};
+};
+
+export const loginUser = ({email, password}) => {
+	console.log("AuthActions.js loginUser");
+	return (dispatch) => {
+		dispatch({type: LOGIN_USER});
+		let url = HOST + 'api/v2/mobile/login';
+		let body = 'userName=' + encodeURIComponent(email) + '&password=' + password;
+		makeRequest(dispatch, url, body, setDataToStorage, loginUserFail, email, null, 'Wrong login or password');
+	};
+
+};
+
+const loginUserSuccess = (dispatch, email, token, profile, client) => {
+	console.log('AuthActions.js', 'loginUserSuccess', 'dispatch', dispatch, 'email', email, 'token', token, 'profile', profile, 'client', client);
+	dispatch({
+		type: LOGIN_USER_SUCCESS,
+		email: email,
+		token: token,
+		profile: profile,
+		client: client
+	});
+	Actions.main({type: 'replace'});
+};
+
+const loginUserFail = (dispatch, message) => {
+	console.log("AuthActions.js actionCreator loginUserFail()");
+	dispatch({
+		type: LOGIN_USER_FAIL,
+		error: message
+	});
+};
+
+export const checkAuth = () => {
+	console.log("AuthActions.js checkAuth()");
+	return dispatch => {
+		getKeyFromStorage("auth").then((stores) => {
+			console.log("AuthActions.js checkAuth stores", stores);
+			const {token, email, client, profile} = stores;
+			let url = HOST + 'api/v2/mobile/mealplan';
+			let utc = new Date().getTimezoneOffset() / 60;
+			let somaVAr= '';
+			let currentDate = prettyDate();
+			let body = 'userName=' + encodeURIComponent(email) + '&token=' + token + '&utcOffsetHours=' + utc + '&date=' + encodeURIComponent(currentDate);
+			if (email && token) {
+			// if (email && token && client && profile) {
+				console.log("AuthActions.js checkAuth if true branch: email, token, profile, client", email, token, profile, client);
+				return makeRequest(dispatch, url, body, loginUserSuccess, loginUserFail, email, token, "Message: Wrong login or password", profile, client);
+			} else {
+				console.log("AuthActions.js checkAuth if false branch: email, token, profile, client", email, token, profile, client);
+				return null;
+			}
+		});
+	};
+};
+
+const setDataToStorage = (dispatch, email, token, user_id, doctor_id, profile, client) => {
+	console.log("AuthActions.js setDataToStorage", 'dispatch', dispatch, 'email', email, 'token', token, 'user_id', user_id, 'doctor_id', doctor_id, 'profile', profile, 'client', client);
+
+	let store = [['kitchry', token], ['userKitchry', email]];
+	if (user_id) {
+		store = [['kitchry', token], ['userKitchry', email], ['profile', profile], ['userId', user_id.toString()], ['doctorId', doctor_id.toString()], ['client', JSON.stringify(client)]];
+	};
+
+	console.log("AuthActions.js", 'setDataToStorage', 'store', store);
+	return AsyncStorage.multiSet(store, (err) => {
+		console.log("AuthActions.js", 'setDataToStorage', 'err', err);
+		if (err) {
+			return loginUserFail(dispatch);
+		} else {
+			return loginUserSuccess(dispatch, email, token, profile, client);
+		}
+	});
+};
+
+const makeRequest = (dispatch, url, body, onSuccess, onFail, email, token, message, profile, client) => {
+	console.log("AuthActions.js makeRequest url: ", url, "body: ", body, "message: ", message);
+	console.log("AuthActions.js makeRequest -- profile: ", profile, "client: ", client);
+	dispatch({type: LOGIN_USER});
+	let xhr = new XMLHttpRequest();
+	xhr.onreadystatechange = () => {
+		if (xhr.readyState === 4) {
+			if (xhr.status === 200) {
+				let result = JSON.parse(xhr.responseText);
+
+				console.log("makeRequest result: ", result);
+
+				if (result.status === 'success') {
+					if (token) {
+						console.log("AuthActions.js makeRequest if (token) true branch -- dispatch, email, token: ", dispatch, email, token);
+						return onSuccess(dispatch, email, token, profile, client);
+					}
+					else {
+
+						token = result.token;
+						let doctorId = result.client.doctor_id;
+						let userId = result.client.user_id;
+                        let profile = result.client.profile || '';
+						let client = result.client;
+						console.log("AuthActions.js makeRequest if (token) false branch -- email, token, userId, doctorId, profile, client", email, token, userId, doctorId, profile, client);
+						return onSuccess(dispatch, email, token, userId, doctorId, profile, client);
+					}
+				}
+				else {
+					return onFail(dispatch, message);
+				}
+			}
+			else {
+				return onFail(dispatch, message);
+			}
+		}
+
+	};
+
+	xhr.open('POST', url);
+	xhr.setRequestHeader('Content-Type', 'application/x-www-form-urlencoded');
+	xhr.setRequestHeader('Accept', 'application/json');
+	xhr.timeout = 5000;
+	xhr.addEventListener('timeout', () => {
+		return onFail(dispatch);
+	});
+	xhr.send(body);
+};
